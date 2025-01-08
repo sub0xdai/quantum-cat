@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from dotenv import load_dotenv
 from minimax_client import MinimaxClient
 import logging
+from rate_limiter import RateLimiter
 
 # Set up logging
 logging.basicConfig(
@@ -31,10 +32,9 @@ if not TELEGRAM_TOKEN:
 GREETING_MESSAGE = """
 ✨ Welcome to QL Cat Bot! 🐱✨
 
-I create magical videos featuring our elegant white Persian cat! 
-Let me bring your creative ideas to life! 🎬
+On spectrum videos featuring our interdimensional slightly frazzled white Persian cat! 🎬
 
-Use /help to see what I can do! 🌟
+Use /help to see wassup 🌟
 """
 
 HELP_MESSAGE = """
@@ -54,6 +54,9 @@ PROCESSING_MESSAGE = "🎬 Your cat video is being generated!"
 STATUS_MESSAGE = "🔄 Current status: *{status}*"
 WAIT_MESSAGE = "⏳ This usually takes 3-5 minutes. The video will be sent here when it's ready."
 TASK_ID_FORMAT = "🔑 Task ID: `{task_id}`"
+RATE_LIMIT_MESSAGE = """⏳ Rate limit exceeded!
+You can generate one video per hour.
+Time remaining: {} minutes"""
 
 class TaskManager:
     def __init__(self):
@@ -67,15 +70,51 @@ class TaskManager:
     
     async def create_task(self, user_id: int, action: str, object_: str) -> str:
         """Create a new video generation task."""
-        prompt = (
-            "Create a video that features the iconic white Persian cat from the reference image - "
+        # Base cat description
+        cat_desc = (
+            "the iconic white Persian cat from the reference image - "
             "maintain its exact appearance: the fluffy pure white fur, round face, flat nose, "
-            "blue eyes with that characteristic stern expression, and small ears hidden in the fluff. "
-            f"\nScene: The white Persian cat is {action} {object_}. "
-            "Create an appropriate environment and background for this action, "
-            "but keep the cat's appearance exactly as shown in the reference image. "
+            "grey eyes with that characteristic stern expression, and small ears hidden in the fluff"
+        )
+        
+        # Camera and scene enhancements based on keywords
+        camera_directions = {
+            'eat': "Close-up shots of the cat's face, occasionally pulling back to show the full scene. Focus on the cat's expressions.",
+            'chase': "Dynamic tracking shots following the cat's movement, mixing close-ups of the determined expression with wider shots of the action.",
+            'sleep': "Gentle, slow panning shots. Occasional close-ups of the peaceful sleeping face.",
+            'play': "Mix of tracking shots and dynamic angles, capturing both the playful action and the cat's expressions.",
+            'walk': "Smooth tracking shots from various angles, showing both the cat's movement and the environment.",
+            'sit': "Steady shots that slowly circle around the cat, with occasional close-ups of its regal expression.",
+            'jump': "Dynamic upward tracking shots, following the cat's graceful movement through the air.",
+            'run': "Fast-paced tracking shots with dramatic angles, capturing the speed and energy.",
+            'dance': "Smooth, circular camera movements that follow the rhythm, mixing wide and close-up shots.",
+            'explore': "Following shots that reveal the environment as the cat discovers it.",
+        }
+        
+        # Check for keywords in both action and object
+        full_prompt = f"{action} {object_}".lower()
+        matching_directions = []
+        
+        # Find all matching keywords
+        for keyword, direction in camera_directions.items():
+            if keyword in full_prompt:
+                matching_directions.append(direction)
+        
+        # If no keywords match, use default
+        if not matching_directions:
+            camera_desc = "Mix of close-ups and wider shots, focusing on both the cat's expressions and the overall scene."
+        else:
+            # Combine matching directions, but don't make it too long
+            camera_desc = " ".join(matching_directions[:2])  # Limit to 2 matching directions
+        
+        # Build cinematic prompt
+        prompt = (
+            f"Create a cinematic video featuring {cat_desc}. "
+            f"\nScene: The Persian cat is {action} {object_}. "
+            f"\nCinematography: {camera_desc} "
+            "\nMaintain consistent lighting and ensure the cat's appearance matches the reference image exactly. "
             "The cat should look like it was taken directly from the reference and placed into this new scene. "
-            
+            "Create an appropriate, atmospheric environment that enhances the mood of the action."
         )
         
         # Submit task to Minimax
@@ -116,8 +155,9 @@ class BotState:
         self.is_running = False
         self.task_manager = TaskManager()
 
-# Initialize global task manager
+# Initialize global managers
 task_manager = TaskManager()
+rate_limiter = RateLimiter()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
@@ -127,12 +167,44 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Handle the /help command."""
     await update.message.reply_text(HELP_MESSAGE)
 
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if the user is an admin in the current chat."""
+    if not update.effective_chat:
+        return False
+    
+    try:
+        chat_member = await context.bot.get_chat_member(
+            chat_id=update.effective_chat.id,
+            user_id=update.effective_user.id
+        )
+        return chat_member.status in ['administrator', 'creator']
+    except Exception:
+        return False
+
 async def cat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /cat command."""
-    if len(context.args) < 2:
-        await update.message.reply_text("Please specify an action and object. Example: /cat eat noodles")
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Please provide an action and object.\nExample: `/cat chase butterfly`",
+            parse_mode='Markdown'
+        )
         return
+
+    # Check if user is admin
+    admin_status = await is_admin(update, context)
+
+    # Check rate limit
+    user_id = update.effective_user.id
+    allowed, seconds_remaining = rate_limiter.check_rate_limit(user_id, is_admin=admin_status)
     
+    if not allowed:
+        minutes_remaining = int(seconds_remaining / 60)
+        await update.message.reply_text(
+            RATE_LIMIT_MESSAGE.format(minutes_remaining),
+            parse_mode='Markdown'
+        )
+        return
+
     action = context.args[0]
     object_ = ' '.join(context.args[1:])
     
@@ -144,7 +216,7 @@ async def cat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         response += f"{WAIT_MESSAGE}\n"
         response += f"{TASK_ID_FORMAT.format(task_id=task_id)}"
         
-        await update.message.reply_text(response)
+        await update.message.reply_text(response, parse_mode='Markdown')
         
         # Start monitoring the task
         asyncio.create_task(monitor_task(update, task_id))
@@ -200,7 +272,7 @@ async def monitor_task(update: Update, task_id: str) -> None:
             elif status == 'Fail':
                 await update.message.reply_text("❌ Sorry, something went wrong while creating your video. Please try again!")
                 break
-            elif status in ['Processing', 'Preparing']:
+            elif status in ['Processing', 'Preparing', 'Queueing']:
                 await asyncio.sleep(10)  # Check every 10 seconds
             else:
                 print(f"Unexpected status received: {status}")
