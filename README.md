@@ -1,41 +1,47 @@
-# QL Cat Bot
+# TG AI Bot
 
-A Telegram bot that generates cat videos based on user commands.
+AI-powered Telegram bot generating custom cat videos on demand.
 
-## Features
+## Core Features
 
-- Generate cat videos with specific actions and objects
-- Track video generation status
-- User-friendly command interface
-- Rate limiting and security measures
+- AI video generation with custom actions
+- Real-time status tracking
+- Rate limiting & security
+- Command-based interface
 
-## Setup
+## Quick Start
 
-1. Install dependencies:
+1. Install:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Configure environment variables in `.env`:
+2. Configure `.env`:
 ```
 TELEGRAM_TOKEN=your_telegram_token
 MINIMAX_API_KEY=your_minimax_api_key
 ```
 
-3. Run the bot:
+3. Launch:
 ```bash
 python bot.py
 ```
 
-## Commands
+## Usage
 
-- `/start` - Start the bot
-- `/help` - Show available commands
-- `/cat [action] [object]` - Generate a cat video (e.g., `/cat eat noodles`)
-- `/status [taskID]` - Check video generation status
+- `/start` - Initialize bot
+- `/help` - Command list
+- `/cat [action] [object]` - Generate video
+- `/status [taskID]` - Check generation status
 
-## Rate Limits
+## Technical Specs
 
-- Maximum 5 pending generations per user
-- 60-second cooldown between commands
-- Maximum video length: 5 minutes
+- 5 concurrent generations per user
+- 60s command cooldown
+- 5min max video length
+
+## Requirements
+
+- Python 3.13+
+- Telegram Bot API
+- Minimax.ai API
